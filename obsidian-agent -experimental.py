@@ -16,7 +16,7 @@ import logging
 import yaml
 from langchain_community.document_loaders import ObsidianLoader
 from langchain.schema import Document
-from config import OPENAI_API_KEY
+from config import OPENAI_API_KEY, OBSIDIAN_PATH
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -128,8 +128,8 @@ def load_or_create_vectorstore(obsidian_path, cache_dir="./cache", force_recreat
 
     return vectorstore, note_name_to_docs
 
-obsidian_path = "/Users/caiodossantos/Library/Mobile Documents/iCloud~md~obsidian/Documents/cms"
-vectorstore, note_name_to_docs = load_or_create_vectorstore(obsidian_path, force_recreate=False)
+# Replace the hardcoded path with the imported variable
+vectorstore, note_name_to_docs = load_or_create_vectorstore(OBSIDIAN_PATH, force_recreate=False)
 
 def create_obsidian_search_tool(vectorstore, note_name_to_docs):
     def obsidian_search(query: str) -> str:

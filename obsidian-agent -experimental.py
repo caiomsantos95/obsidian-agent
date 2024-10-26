@@ -310,33 +310,14 @@ class ChatbotGUI:
 
             if isinstance(response, dict):
                 if 'intermediate_steps' in response:
-                    steps_frame = ttk.Frame(self.chat_display, style="Custom.TFrame")
-                    self.chat_display.window_create(tk.END, window=steps_frame)
-                    self.chat_display.insert(tk.END, "\n")
-
-                    steps_label = ttk.Label(steps_frame, text="Intermediary Steps", font=("TkDefaultFont", 10, "bold"))
-                    steps_label.pack(anchor="w", padx=5, pady=5)
-
-                    steps_text = scrolledtext.ScrolledText(steps_frame, wrap=tk.WORD, height=6, width=70)
-                    steps_text.pack(expand=True, fill=tk.BOTH, padx=5, pady=5)
-
                     for i, step in enumerate(response['intermediate_steps']):
                         tool = step[0].tool
                         action = step[0].tool_input
                         result = step[1]
 
-                        steps_text.insert(tk.END, f"Step {i+1}: Using {tool}\n", "thought")
-                        steps_text.insert(tk.END, f"Action: {action}\n", "thought")
-                        steps_text.insert(tk.END, f"Observation: {result}\n\n", "observation")
-
-                    steps_text.configure(state="disabled")
-
-                    toggle_button = ttk.Button(steps_frame, text="Show/Hide Steps", 
-                                               command=lambda: self.toggle_steps(steps_text, steps_frame))
-                    toggle_button.pack(pady=5)
-
-                    # Initially hide the steps
-                    steps_text.pack_forget()
+                        self.display_message(f"Step {i+1}: Using {tool}", "thought")
+                        self.display_message(f"Action: {action}", "thought")
+                        self.display_message(f"Observation: {result}", "observation")
 
                 if 'output' in response:
                     self.display_message(f"Final Answer: {response['output']}", "agent")
@@ -366,14 +347,6 @@ class ChatbotGUI:
     def use_tool(self, tool_name):
         self.input_field.insert(tk.END, f"Use the {tool_name} tool to ")
         self.input_field.focus()
-
-    def toggle_steps(self, steps_text, steps_frame):
-        if steps_text.winfo_viewable():
-            steps_text.pack_forget()
-            steps_frame.configure(height=1)  # Collapse the frame
-        else:
-            steps_text.pack(expand=True, fill=tk.BOTH, padx=5, pady=5)
-            steps_frame.configure(height='')  # Reset the height to default
 
 def main():
     try:

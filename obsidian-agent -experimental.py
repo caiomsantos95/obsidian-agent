@@ -17,6 +17,9 @@ import yaml
 from langchain_community.document_loaders import ObsidianLoader
 from langchain.schema import Document
 from config import OPENAI_API_KEY, OBSIDIAN_PATH
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+from prompts import CUSTOM_SUMMARY_PROMPT
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -160,45 +163,7 @@ def create_obsidian_search_tool(vectorstore, note_name_to_docs):
             for doc in unique_docs
         ])
 
-        custom_prompt = PromptTemplate(
-            template="""You are an assistant summarizing content from an Obsidian Vault, which contains both knowledge articles and personal journal entries. Your goal is to create engaging and detailed summaries that bring the content to life while maintaining clarity and simplicity in language.
-
-**Guidelines:**
-
-1. **Distinguish Content Types:**
-   - Clearly differentiate between **Knowledge Entries** and **Journal Entries**.
-   - For **Knowledge Entries**, focus on explaining concepts, theories, and factual information.
-   - For **Journal Entries**, highlight personal reflections, experiences, and anecdotes.
-
-2. **Enhance Engagement:**
-   - Use a narrative style that weaves together different pieces of information.
-   - Incorporate interesting details and insights that make the summary compelling.
-   - Avoid overly terse or bullet-point summaries; aim for flowing paragraphs.
-
-3. **Provide Context and Depth:**
-   - Offer background information where necessary to help understand the content.
-   - Make connections between different pieces of information to provide a comprehensive view.
-
-4. **Cite Sources:**
-   - Always include the source of each piece of information in the format [Source: filename].
-   - Integrate citations smoothly within the narrative.
-
-5. **Maintain Clarity:**
-   - Keep the language simple and natural.
-   - Ensure the summary is well-organized and easy to follow.
-6. **Context on Obsidian Vault:**
-   - Obsidian used [[]] in the text to link to other notes.
-   - If you find a link, you should explore that note and use the content from that note as context.
-
-**Content to Summarize:**
-
-{text}
-
-**Please provide a detailed and engaging response that captures the key points, includes relevant sources, and highlights the most interesting aspects of the content.**""",
-            input_variables=["text"]
-        )
-
-        summary_chain = LLMChain(llm=llm, prompt=custom_prompt)
+        summary_chain = LLMChain(llm=llm, prompt=CUSTOM_SUMMARY_PROMPT)
         summary = summary_chain.run(content_to_summarize)
 
         return f"Summary of relevant information from your Obsidian Vault:\n{summary}"
@@ -278,44 +243,56 @@ class ChatbotGUI:
     def __init__(self, master, agent):
         self.master = master
         master.title("Obsidian Agent Chatbot")
-        master.geometry("800x600")  # Increased size for better readability
+        master.geometry("800x600")
+
+        style = ttk.Style("cosmo")
+        style.configure("TFrame", borderwidth=0)
+        style.configure("Custom.TFrame", borderwidth=1, relief="solid", background="white")
 
         self.agent = agent
 
-        self.chat_display = scrolledtext.ScrolledText(master, wrap=tk.WORD, bg="white")
-        self.chat_display.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
+        self.chat_frame = ttk.Frame(master, padding=10)
+        self.chat_frame.pack(expand=True, fill=tk.BOTH)
+
+        self.chat_display = scrolledtext.ScrolledText(self.chat_frame, wrap=tk.WORD, bg="white")
+        self.chat_display.pack(expand=True, fill=tk.BOTH)
 
         # Create tags for different colors and styles
-        self.chat_display.tag_config("user", foreground="blue", font=("TkDefaultFont", 10, "bold"))
-        self.chat_display.tag_config("agent", foreground="black", font=("TkDefaultFont", 10, "bold"))
-        self.chat_display.tag_config("thinking", foreground="black", font=("TkDefaultFont", 10, "italic"))
-        self.chat_display.tag_config("observation", foreground="black", font=("TkDefaultFont", 10, "italic"))
-        self.chat_display.tag_config("thought", foreground="black", font=("TkDefaultFont", 10, "italic"))
+        self.chat_display.tag_config("user", foreground="#007bff", font=("TkDefaultFont", 10, "bold"))
+        self.chat_display.tag_config("agent", foreground="#28a745", font=("TkDefaultFont", 10, "bold"))
+        self.chat_display.tag_config("thinking", foreground="#6c757d", font=("TkDefaultFont", 10, "italic"))
+        self.chat_display.tag_config("observation", foreground="#17a2b8", font=("TkDefaultFont", 10))
+        self.chat_display.tag_config("thought", foreground="#ffc107", font=("TkDefaultFont", 10))
 
         # Display initial message
         self.display_message("Agent: How can I help you?", "agent")
 
-        self.button_frame = tk.Frame(master)
+        self.button_frame = ttk.Frame(master, style="Custom.TFrame", padding=5)
         self.button_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        self.obsidian_button = tk.Button(self.button_frame, text="Obsidian Search", command=lambda: self.use_tool("Obsidian Search"))
+        self.obsidian_button = ttk.Button(self.button_frame, text="Obsidian Search", command=lambda: self.use_tool("Obsidian Search"))
         self.obsidian_button.pack(side=tk.LEFT, padx=5)
 
-        self.journal_button = tk.Button(self.button_frame, text="Journal", command=lambda: self.use_tool("Journal"))
+        self.journal_button = ttk.Button(self.button_frame, text="Journal", command=lambda: self.use_tool("Journal"))
         self.journal_button.pack(side=tk.LEFT, padx=5)
 
-        self.gpt_button = tk.Button(self.button_frame, text="GPT Direct", command=lambda: self.use_tool("GPT Direct"))
+        self.gpt_button = ttk.Button(self.button_frame, text="GPT Direct", command=lambda: self.use_tool("GPT Direct"))
         self.gpt_button.pack(side=tk.LEFT, padx=5)
 
-        self.input_frame = tk.Frame(master)
+        self.input_frame = ttk.Frame(master, style="Custom.TFrame", padding=5)
         self.input_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        self.input_field = tk.Entry(self.input_frame)
+        self.input_field = ttk.Entry(self.input_frame)
         self.input_field.pack(side=tk.LEFT, expand=True, fill=tk.X)
         self.input_field.bind("<Return>", self.send_message)
 
-        self.send_button = tk.Button(self.input_frame, text="Send", command=self.send_message)
+        self.send_button = ttk.Button(self.input_frame, text="Send", command=self.send_message)
         self.send_button.pack(side=tk.RIGHT)
+
+        # Add a progress indicator
+        self.progress_frame = ttk.Frame(self.input_frame)
+        self.progress_frame.pack(side=tk.LEFT, padx=(5, 0))
+        self.progress = ttk.Progressbar(self.progress_frame, mode="indeterminate", length=20)
 
     def send_message(self, event=None):
         user_input = self.input_field.get()
@@ -327,18 +304,39 @@ class ChatbotGUI:
     def get_agent_response(self, user_input):
         try:
             self.display_message("Agent is thinking...", "thinking")
+            self.progress.start()
+            self.progress.pack()
             response = self.agent({"input": user_input})
 
             if isinstance(response, dict):
                 if 'intermediate_steps' in response:
+                    steps_frame = ttk.Frame(self.chat_display, style="Custom.TFrame")
+                    self.chat_display.window_create(tk.END, window=steps_frame)
+                    self.chat_display.insert(tk.END, "\n")
+
+                    steps_label = ttk.Label(steps_frame, text="Intermediary Steps", font=("TkDefaultFont", 10, "bold"))
+                    steps_label.pack(anchor="w", padx=5, pady=5)
+
+                    steps_text = scrolledtext.ScrolledText(steps_frame, wrap=tk.WORD, height=6, width=70)
+                    steps_text.pack(expand=True, fill=tk.BOTH, padx=5, pady=5)
+
                     for i, step in enumerate(response['intermediate_steps']):
                         tool = step[0].tool
                         action = step[0].tool_input
                         result = step[1]
 
-                        self.display_message(f"Step {i+1}: Using {tool}", "thought")
-                        self.display_message(f"Action: {action}", "thought")
-                        self.display_message(f"Observation: {result}", "observation")
+                        steps_text.insert(tk.END, f"Step {i+1}: Using {tool}\n", "thought")
+                        steps_text.insert(tk.END, f"Action: {action}\n", "thought")
+                        steps_text.insert(tk.END, f"Observation: {result}\n\n", "observation")
+
+                    steps_text.configure(state="disabled")
+
+                    toggle_button = ttk.Button(steps_frame, text="Show/Hide Steps", 
+                                               command=lambda: self.toggle_steps(steps_text, steps_frame))
+                    toggle_button.pack(pady=5)
+
+                    # Initially hide the steps
+                    steps_text.pack_forget()
 
                 if 'output' in response:
                     self.display_message(f"Final Answer: {response['output']}", "agent")
@@ -350,7 +348,10 @@ class ChatbotGUI:
                 self.display_message(f"Final Answer: {response}", "agent")
         except Exception as e:
             self.display_message(f"Error: {str(e)}")
-            logging.error(f"Detailed error: {e}")  # This will print the full error to the console
+            logging.error(f"Detailed error: {e}")
+        finally:
+            self.progress.stop()
+            self.progress.pack_forget()
 
     def display_message(self, message, tag=None):
         if tag in ["user", "agent"]:
@@ -365,6 +366,14 @@ class ChatbotGUI:
     def use_tool(self, tool_name):
         self.input_field.insert(tk.END, f"Use the {tool_name} tool to ")
         self.input_field.focus()
+
+    def toggle_steps(self, steps_text, steps_frame):
+        if steps_text.winfo_viewable():
+            steps_text.pack_forget()
+            steps_frame.configure(height=1)  # Collapse the frame
+        else:
+            steps_text.pack(expand=True, fill=tk.BOTH, padx=5, pady=5)
+            steps_frame.configure(height='')  # Reset the height to default
 
 def main():
     try:
@@ -385,7 +394,7 @@ def main():
             return_intermediate_steps=True
         )
 
-        root = tk.Tk()
+        root = ttk.Window(themename="cosmo")
         gui = ChatbotGUI(root, agent)
 
         root.mainloop()

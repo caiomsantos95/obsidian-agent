@@ -20,22 +20,23 @@ from config import OPENAI_API_KEY, OBSIDIAN_PATH
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from prompts import CUSTOM_SUMMARY_PROMPT
+import tiktoken
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # LangChain imports
-from langchain.chains import ConversationChain, LLMChain
-from langchain.agents import Tool, AgentExecutor, create_react_agent, AgentType, initialize_agent
+from langchain.chains import LLMChain
+from langchain.agents import Tool, create_react_agent, initialize_agent, AgentExecutor, AgentType
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.prompts import StringPromptTemplate, PromptTemplate, ChatPromptTemplate, MessagesPlaceholder
 from langchain.schema import AgentAction, AgentFinish
-from langchain_community.document_loaders import ObsidianLoader
-from langchain_community.vectorstores import FAISS
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings  # Update this import
-from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.document_loaders import ObsidianLoader
+from langchain.vectorstores import FAISS
+from langchain.embeddings import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains.summarize import load_summarize_chain
+from langchain.chat_models import ChatOpenAI
 
 # Type hinting imports
 from typing import List, Union, Dict, Any
@@ -69,28 +70,47 @@ class CustomObsidianLoader(ObsidianLoader):
         metadata['links'] = links
         return metadata
 
-def load_or_create_vectorstore(obsidian_path, cache_dir="./cache", force_recreate=True):
+def load_or_create_vectorstore(obsidian_path, cache_dir="./cache", force_recreate=False):
     index_file = os.path.join(cache_dir, "faiss_index.pkl")
     metadata_file = os.path.join(cache_dir, "vectorstore_metadata.pkl")
-
-    # If force_recreate is True, delete the existing cache
-    if force_recreate and os.path.exists(cache_dir):
-        shutil.rmtree(cache_dir)
-        logging.info("Deleted existing vectorstore cache.")
+    vault_state_file = os.path.join(cache_dir, "vault_state.pkl")
 
     os.makedirs(cache_dir, exist_ok=True)
 
-    if not force_recreate and os.path.exists(index_file) and os.path.exists(metadata_file):
-        with open(metadata_file, "rb") as f:
-            metadata = pickle.load(f)
-        if datetime.now() - metadata["created_at"] < timedelta(days=1):
+    def get_vault_state(path):
+        """Get the current state of the vault (modification times of all files)"""
+        vault_state = {}
+        for root, _, files in os.walk(path):
+            for file in files:
+                if file.endswith('.md'):
+                    full_path = os.path.join(root, file)
+                    vault_state[full_path] = os.path.getmtime(full_path)
+        return vault_state
+
+    def vault_has_changed():
+        """Check if the vault has changed since last cache"""
+        if not os.path.exists(vault_state_file):
+            return True
+        
+        with open(vault_state_file, 'rb') as f:
+            old_state = pickle.load(f)
+        
+        current_state = get_vault_state(obsidian_path)
+        return old_state != current_state
+
+    # Check if cache exists and is valid
+    cache_exists = all(os.path.exists(f) for f in [index_file, metadata_file, vault_state_file])
+    
+    if not force_recreate and cache_exists and not vault_has_changed():
+        try:
             logging.info("Loading vectorstore from cache...")
             embeddings = OpenAIEmbeddings()
             vectorstore = FAISS.load_local(cache_dir, embeddings)
-            # Load the note_name_to_docs mapping
             with open(os.path.join(cache_dir, 'note_name_to_docs.pkl'), 'rb') as f:
                 note_name_to_docs = pickle.load(f)
             return vectorstore, note_name_to_docs
+        except Exception as e:
+            logging.warning(f"Error loading cache: {e}. Recreating vectorstore...")
 
     logging.info("Creating new vectorstore...")
     loader = CustomObsidianLoader(obsidian_path, collect_metadata=True)
@@ -108,7 +128,6 @@ def load_or_create_vectorstore(obsidian_path, cache_dir="./cache", force_recreat
     # Build note_name_to_docs mapping
     note_name_to_docs = {}
     for doc in texts:
-        # Extract note name from source
         note_name = os.path.splitext(os.path.basename(doc.metadata['source']))[0]
         if note_name in note_name_to_docs:
             note_name_to_docs[note_name].append(doc)
@@ -116,18 +135,18 @@ def load_or_create_vectorstore(obsidian_path, cache_dir="./cache", force_recreat
             note_name_to_docs[note_name] = [doc]
 
     embeddings = OpenAIEmbeddings()
-    
     vectorstore = FAISS.from_documents(texts, embeddings)
 
-    # Save the index
+    # Save everything
     vectorstore.save_local(cache_dir)
-
     with open(metadata_file, "wb") as f:
         pickle.dump({"created_at": datetime.now()}, f)
-
-    # Save the note_name_to_docs mapping
     with open(os.path.join(cache_dir, 'note_name_to_docs.pkl'), 'wb') as f:
         pickle.dump(note_name_to_docs, f)
+    
+    # Save current vault state
+    with open(vault_state_file, 'wb') as f:
+        pickle.dump(get_vault_state(obsidian_path), f)
 
     return vectorstore, note_name_to_docs
 

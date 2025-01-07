@@ -17,3 +17,4 @@ obsidian-assistant
 obsidian_agent_env/
 obsidian_rag_bot.py
 obsidian_rag_bot_co.py
+prompts.py

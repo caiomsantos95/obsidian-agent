@@ -21,9 +21,11 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from prompts import CUSTOM_SUMMARY_PROMPT
 import tiktoken
+import webbrowser
+import urllib.parse
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # LangChain imports
 from langchain.chains import LLMChain
@@ -65,9 +67,64 @@ class CustomObsidianLoader(ObsidianLoader):
 
     def _get_metadata(self, file_path, content):
         metadata = super()._get_metadata(file_path, content)
-        # Extract links from content
-        links = re.findall(r'\[\[([^\]]+)\]\]', content)
-        metadata['links'] = links
+        
+        # Log the raw content for debugging
+        logging.debug(f"Processing content from {os.path.basename(file_path)}:")
+        logging.debug(f"Raw content (first 500 chars): {content[:500]}")
+        
+        # Extract different types of Obsidian links with more precise patterns
+        wikilinks = re.findall(r'\[\[([^\]\|]+?)\]\]', content)  # [[Note]] - captures until ]] or |
+        aliased_wikilinks = re.findall(r'\[\[([^\]\|]+?)\|([^\]]+?)\]\]', content)  # [[Note|Alias]]
+        mdlinks = re.findall(r'\[([^\]]+)\]\(([^\)]+?\.md)\)', content)  # [Note](Note.md)
+        bare_links = re.findall(r'(?<!\[)\b([a-zA-Z0-9-_\s]+\.md)\b', content)  # Note.md
+        hashtags = re.findall(r'(?<![\w])#([a-zA-Z0-9-_]+)', content)  # #tag (not part of a word)
+        
+        # Combine all links
+        all_links = set()
+        
+        # Process wiki-style links
+        for link in wikilinks:
+            # Remove any # and text after it (header links)
+            base_link = link.split('#')[0].strip()
+            if base_link:
+                all_links.add(base_link)
+                logging.debug(f"Added wiki link: {base_link}")
+        
+        # Process aliased wiki links
+        for link, alias in aliased_wikilinks:
+            base_link = link.split('#')[0].strip()
+            if base_link:
+                all_links.add(base_link)
+                logging.debug(f"Added aliased wiki link: {base_link} (alias: {alias})")
+        
+        # Process markdown links
+        for text, link in mdlinks:
+            base_link = os.path.splitext(os.path.basename(link))[0].strip()
+            if base_link:
+                all_links.add(base_link)
+                logging.debug(f"Added markdown link: {base_link}")
+        
+        # Process bare links
+        for link in bare_links:
+            base_link = os.path.splitext(link)[0].strip()
+            if base_link:
+                all_links.add(base_link)
+                logging.debug(f"Added bare link: {base_link}")
+        
+        # Add hashtags as potential links
+        all_links.update(hashtags)
+        for tag in hashtags:
+            logging.debug(f"Added hashtag: {tag}")
+        
+        logging.info(f"Extracted links from {os.path.basename(file_path)}:")
+        logging.info(f"  Wiki-style links: {wikilinks}")
+        logging.info(f"  Aliased wiki links: {[f'{link}|{alias}' for link, alias in aliased_wikilinks]}")
+        logging.info(f"  Markdown links: {mdlinks}")
+        logging.info(f"  Bare links: {bare_links}")
+        logging.info(f"  Hashtags: {hashtags}")
+        logging.info(f"  Final processed links: {list(all_links)}")
+        
+        metadata['links'] = list(all_links)
         return metadata
 
 def load_or_create_vectorstore(obsidian_path, cache_dir="./cache", force_recreate=False):
@@ -153,44 +210,80 @@ def load_or_create_vectorstore(obsidian_path, cache_dir="./cache", force_recreat
 # Replace the hardcoded path with the imported variable
 vectorstore, note_name_to_docs = load_or_create_vectorstore(OBSIDIAN_PATH, force_recreate=False)
 
+def obsidian_search(query: str, vectorstore=vectorstore, note_name_to_docs=note_name_to_docs):
+    logging.info(f"\nSearching for: {query}")
+    
+    # Initial search
+    docs = vectorstore.similarity_search(query)
+    logging.info(f"Initial search found {len(docs)} documents")
+    
+    all_docs = []  # Start with empty list for all documents
+    explored_links = set()  # Track explored links
+    valuable_links = set()  # Track valuable links
+    
+    # Process initial search results
+    for doc in docs:
+        logging.info(f"\nProcessing document: {doc.metadata.get('source', '').split('/')[-1]}")
+        logging.info(f"Raw metadata: {doc.metadata}")
+        
+        # Add initial document with its content and source
+        all_docs.append({
+            'content': doc.page_content,
+            'source': doc.metadata.get('source', '').split('/')[-1],
+            'context': 'Main Search Result'
+        })
+        
+        # Extract links using regex
+        links = re.findall(r'\[\[(.*?)\]\]', doc.page_content)
+        logging.info(f"Extracted links: {links}")
+        
+        # Explore each link
+        for link in links:
+            if link not in explored_links:
+                explored_links.add(link)
+                
+                # Search for the linked document
+                linked_docs = vectorstore.similarity_search(f"filename:{link}")
+                
+                if linked_docs:
+                    valuable_links.add(link)
+                    # Add linked document with context about why it was included
+                    all_docs.append({
+                        'content': linked_docs[0].page_content,
+                        'source': linked_docs[0].metadata.get('source', '').split('/')[-1],
+                        'context': f'Linked from {doc.metadata.get("source", "").split("/")[-1]}',
+                        'link_reason': f'Referenced in discussion of {query}'
+                    })
+
+    logging.info("\nSummary of link exploration:")
+    logging.info(f"Total explored links: {len(explored_links)}")
+    logging.info(f"Total valuable links: {len(valuable_links)}")
+    logging.info(f"Total documents for summarization: {len(all_docs)}")
+    
+    # Prepare content for summarization
+    content_sections = []
+    for doc in all_docs:
+        section = f"[Source: {doc['source']}]\n"
+        section += f"[Context: {doc['context']}]"
+        if 'link_reason' in doc:
+            section += f"\n[Link Reason: {doc['link_reason']}]"
+        section += f"\n{doc['content']}\n"
+        content_sections.append(section)
+    
+    content_to_summarize = "\n\n".join(content_sections)
+    logging.info(f"Number of content sections for summarization: {len(content_sections)}")
+    
+    # Generate summary using the custom prompt
+    summary_chain = LLMChain(llm=llm, prompt=CUSTOM_SUMMARY_PROMPT)
+    summary = summary_chain.run(text=content_to_summarize)
+    
+    return summary
+
 def create_obsidian_search_tool(vectorstore, note_name_to_docs):
-    def obsidian_search(query: str) -> str:
-        # Initial similarity search
-        initial_docs = vectorstore.similarity_search(query, k=5)
-
-        # Use a list instead of a set
-        docs_list = list(initial_docs)
-
-        # For each initial doc, get its linked notes
-        for doc in initial_docs:
-            links = doc.metadata.get('links', [])
-            for link in links:
-                linked_docs = note_name_to_docs.get(link, [])
-                docs_list.extend(linked_docs)
-
-        # Remove duplicates based on page_content
-        unique_docs = []
-        seen_content = set()
-        for doc in docs_list:
-            if doc.page_content not in seen_content:
-                unique_docs.append(doc)
-                seen_content.add(doc.page_content)
-
-        # Prepare content for summarization
-        content_to_summarize = "\n\n".join([
-            f"[Source: {doc.metadata.get('source', 'Unknown')}]\n{doc.page_content}"
-            for doc in unique_docs
-        ])
-
-        summary_chain = LLMChain(llm=llm, prompt=CUSTOM_SUMMARY_PROMPT)
-        summary = summary_chain.run(content_to_summarize)
-
-        return f"Summary of relevant information from your Obsidian Vault:\n{summary}"
-
     return Tool(
         name="Obsidian Search",
         func=obsidian_search,
-        description="Search through Obsidian files for relevant information"
+        description="Search through Obsidian files for relevant information, evaluating and including content from linked notes"
     )
 
 def create_journal_tool(llm):
